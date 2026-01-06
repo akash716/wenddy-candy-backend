@@ -1,3 +1,6 @@
+import dotenv from "dotenv";
+dotenv.config(); // 🔑 LOAD ENV VARIABLES FIRST
+
 import express from "express";
 import cors from "cors";
 
@@ -24,6 +27,9 @@ app.get("/", (req, res) => {
   res.json({ status: "Wenddy Candy Backend Running" });
 });
 
-app.listen(5000, () => {
-  console.log("✅ Server running on http://localhost:5000");
+// 🔑 MUST use process.env.PORT on Render
+const PORT = process.env.PORT || 5000;
+
+app.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
 });
