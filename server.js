@@ -1,35 +1,51 @@
-import dotenv from "dotenv";
-dotenv.config(); // 🔑 LOAD ENV VARIABLES FIRST
-
 import express from "express";
 import cors from "cors";
 
-import salesRoutes from "./routes/sales.js";
-import candiesRoutes from "./routes/candies.js";
-import offersRoutes from "./routes/offers.js";
-import eventsRoutes from "./routes/events.js";
-import adminInventory from "./routes/adminInventory.js";
-import adminReports from "./routes/adminReports.js";
+import stallRoutes from "./routes/admin/stalls.js";
+import eventRoutes from "./routes/admin/events.js";
+import eventCandyRoutes from "./routes/admin/eventCandies.js";
+import offerRoutes from "./routes/admin/offers.js";
+import inventoryRoutes from "./routes/admin/inventory.js";
+import salesmanConfigRoutes from "./routes/salesman/config.js";
+import checkoutRoutes from "./routes/sales/checkout.js";
+import candies from "./routes/admin/candies.js";
+import stallCandies from "./routes/admin/stallCandies.js";
+import salesmanRoutes from "./routes/salesman/dashboard.js";
+import salesmanSellRoutes from "./routes/salesman/sell.js";
+import stallOffersRoutes from "./routes/admin/stallOffers.js";
+import reportRoutes from "./routes/admin/reports.js";
 
 const app = express();
 
-app.use(cors());
+/* ───────────── Middleware ───────────── */
+app.use(cors({
+  origin: "*", // 🔒 later restrict to frontend URL
+}));
 app.use(express.json());
 
-app.use("/api/sales", salesRoutes);
-app.use("/api/candies", candiesRoutes);
-app.use("/api/offers", offersRoutes);
-app.use("/api/events", eventsRoutes);
-app.use("/api/admin/inventory", adminInventory);
-app.use("/api/admin/reports", adminReports);
-
+/* ───────────── Health Check ───────────── */
 app.get("/", (req, res) => {
-  res.json({ status: "Wenddy Candy Backend Running" });
+  res.send("✅ Wenddy Candy API running");
 });
 
-// 🔑 MUST use process.env.PORT on Render
+/* ───────────── Routes ───────────── */
+app.use("/api/admin/stalls", stallRoutes);
+app.use("/api/admin/events", eventRoutes);
+app.use("/api/admin/event-candies", eventCandyRoutes);
+app.use("/api/admin/offers", offerRoutes);
+app.use("/api/admin/inventory", inventoryRoutes);
+app.use("/api/salesman/config", salesmanConfigRoutes);
+app.use("/api/sales/checkout", checkoutRoutes);
+app.use("/api/admin/candies", candies);
+app.use("/api/admin/stalls", stallCandies);
+app.use("/api/salesman/dashboard", salesmanRoutes);
+app.use("/api/salesman", salesmanSellRoutes);
+app.use("/api/admin/stall-offers", stallOffersRoutes);
+app.use("/api/admin/reports", reportRoutes);
+
+/* ───────────── IMPORTANT FOR RAILWAY ───────────── */
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {
-  console.log(`✅ Server running on port ${PORT}`);
+  console.log(`🚀 Wenddy Candy backend running on port ${PORT}`);
 });

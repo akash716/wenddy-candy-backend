@@ -1,15 +1,19 @@
 {
-  "name": "wenddy-candy-backend",
+  "name": "wenddy-backend",
   "version": "1.0.0",
+  "description": "Wenddy Candy Backend",
   "type": "module",
-  "main": "server.js",
   "scripts": {
+    "dev": "nodemon server.js",
     "start": "node server.js"
   },
   "dependencies": {
+    "express": "^5.2.1",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
-    "express": "^4.18.2",
-    "mysql2": "^3.6.0"
+    "mysql2": "^3.16.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.11"
   }
 }
