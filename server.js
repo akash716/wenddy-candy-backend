@@ -1,6 +1,10 @@
+import dotenv from "dotenv";
+dotenv.config();
+
 import express from "express";
 import cors from "cors";
 
+/* ───────────── ROUTES ───────────── */
 import stallRoutes from "./routes/admin/stalls.js";
 import eventRoutes from "./routes/admin/events.js";
 import eventCandyRoutes from "./routes/admin/eventCandies.js";
@@ -14,13 +18,17 @@ import salesmanRoutes from "./routes/salesman/dashboard.js";
 import salesmanSellRoutes from "./routes/salesman/sell.js";
 import stallOffersRoutes from "./routes/admin/stallOffers.js";
 import reportRoutes from "./routes/admin/reports.js";
+import comboOfferRules from "./routes/admin/comboOfferRules.js";
+import previewRoutes from "./routes/salesman/preview.js";
 
 const app = express();
 
 /* ───────────── Middleware ───────────── */
 app.use(cors({
-  origin: "*", // 🔒 later restrict to frontend URL
+  origin: process.env.FRONTEND_URL || "*",
+  credentials: true
 }));
+
 app.use(express.json());
 
 /* ───────────── Health Check ───────────── */
@@ -34,16 +42,20 @@ app.use("/api/admin/events", eventRoutes);
 app.use("/api/admin/event-candies", eventCandyRoutes);
 app.use("/api/admin/offers", offerRoutes);
 app.use("/api/admin/inventory", inventoryRoutes);
-app.use("/api/salesman/config", salesmanConfigRoutes);
-app.use("/api/sales/checkout", checkoutRoutes);
 app.use("/api/admin/candies", candies);
-app.use("/api/admin/stalls", stallCandies);
-app.use("/api/salesman/dashboard", salesmanRoutes);
-app.use("/api/salesman", salesmanSellRoutes);
+app.use("/api/admin/stall-candies", stallCandies);
 app.use("/api/admin/stall-offers", stallOffersRoutes);
+app.use("/api/admin/combo-offer-rules", comboOfferRules);
 app.use("/api/admin/reports", reportRoutes);
 
-/* ───────────── IMPORTANT FOR RAILWAY ───────────── */
+app.use("/api/salesman/config", salesmanConfigRoutes);
+app.use("/api/salesman/dashboard", salesmanRoutes);
+app.use("/api/salesman", salesmanSellRoutes);
+app.use("/api/salesman/preview", previewRoutes);
+
+app.use("/api/sales/checkout", checkoutRoutes);
+
+/* ───────────── PORT ───────────── */
 const PORT = process.env.PORT || 5000;
 
 app.listen(PORT, () => {

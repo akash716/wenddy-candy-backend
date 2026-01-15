@@ -5,11 +5,12 @@ const router = express.Router();
 
 /**
  * GET /api/salesman/config/:stallId
- * Loads:
+ *
+ * Provides:
  *  - Stall info
  *  - Active event (optional)
- *  - Candies assigned to stall (inventory-aware)
- *  - Combo offers assigned to stall (inventory-aware)
+ *  - ALL candies (SingleGrid)
+ *  - COMBO OFFER RULES with allowed candies (ComboGrid)
  */
 router.get("/:stallId", async (req, res) => {
   const { stallId } = req.params;
@@ -18,30 +19,35 @@ router.get("/:stallId", async (req, res) => {
     /* =========================
        1️⃣ STALL
     ========================= */
-const [[stall]] = await db.query(
-  `
-  SELECT *
-  FROM stalls
-  WHERE id = ?
-    AND is_active = 1
-    AND is_deleted = 0
-  `,
-  [stallId]
-);
+    const [[stall]] = await db.query(
+      `
+      SELECT *
+      FROM stalls
+      WHERE id = ?
+        AND is_active = 1
+        AND is_deleted = 0
+      `,
+      [stallId]
+    );
 
+    if (!stall) {
+      return res.status(404).json({ error: "Stall not found" });
+    }
 
     /* =========================
        2️⃣ ACTIVE EVENT (OPTIONAL)
     ========================= */
-    const [[event]] = await db.query(`
+    const [[event]] = await db.query(
+      `
       SELECT *
       FROM events
       WHERE CURDATE() BETWEEN start_date AND end_date
       LIMIT 1
-    `);
+      `
+    );
 
     /* =========================
-       3️⃣ INVENTORY-AWARE CANDIES
+       3️⃣ ALL CANDIES (SINGLE TAB)
     ========================= */
     const [candies] = await db.query(
       `
@@ -63,59 +69,62 @@ const [[stall]] = await db.query(
     );
 
     /* =========================
-       4️⃣ STALL-SPECIFIC COMBO OFFERS
+       4️⃣ COMBO OFFER RULES (NEW SYSTEM ONLY)
     ========================= */
     const [offers] = await db.query(
       `
       SELECT
-        o.id,
-        o.title,
-        o.combo_size,
-        o.price
-      FROM stall_combo_offers sco
-      JOIN combo_offers o ON o.id = sco.offer_id
-      WHERE sco.stall_id = ? AND o.is_active = 1
-      `,
-      [stallId]
+        r.id,
+        r.unique_count,
+        r.offer_price,
+        r.price
+      FROM combo_offer_rules r
+      WHERE r.is_active = 1
+      ORDER BY r.id
+      `
     );
 
     /* =========================
-       5️⃣ ALLOWED CANDIES + STOCK
-       🔥 THIS IS THE FIX
+       5️⃣ RULE → ALLOWED CANDIES
+       ✔ stock = 0 allowed (dim in UI)
     ========================= */
     for (const offer of offers) {
-      const [allowed] = await db.query(
+      const [offerCandies] = await db.query(
         `
         SELECT
           c.id,
           c.name,
+          c.price,
           IFNULL(i.stock, 0) AS stock
-        FROM combo_offer_candies coc
-        JOIN candies c ON c.id = coc.candy_id
+        FROM combo_offer_rule_candies rc
+        JOIN candies c ON c.id = rc.candy_id
         LEFT JOIN stall_candy_inventory i
           ON i.candy_id = c.id
-          AND i.stall_id = ?
-        WHERE coc.offer_id = ?
+         AND i.stall_id = ?
+        WHERE rc.rule_id = ?
+        ORDER BY c.name
         `,
         [stallId, offer.id]
       );
 
-      offer.allowed_candies = allowed;
+      offer.candies = offerCandies;
     }
 
     /* =========================
-       FINAL RESPONSE
+       6️⃣ FINAL RESPONSE
     ========================= */
     res.json({
       stall,
       event: event || null,
-      candies,
-      offers
+      candies, // SingleGrid
+      offers   // ComboGrid (RULE BASED)
     });
 
   } catch (err) {
     console.error("SALESMAN CONFIG ERROR:", err);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      error: "Failed to load salesman config"
+    });
   }
 });
 
