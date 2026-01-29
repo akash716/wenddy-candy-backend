@@ -8,9 +8,9 @@ const router = express.Router();
  *
  * Provides:
  *  - Stall info
- *  - Active event (optional)
- *  - ALL candies (SingleGrid)
- *  - COMBO OFFER RULES with allowed candies (ComboGrid)
+ *  - Active event
+ *  - All candies (Single tab) ✅ WITH IMAGE
+ *  - Combo offers (Same price + Mixed price) ✅ WITH IMAGE
  */
 router.get("/:stallId", async (req, res) => {
   const { stallId } = req.params;
@@ -35,7 +35,7 @@ router.get("/:stallId", async (req, res) => {
     }
 
     /* =========================
-       2️⃣ ACTIVE EVENT (OPTIONAL)
+       2️⃣ ACTIVE EVENT
     ========================= */
     const [[event]] = await db.query(
       `
@@ -48,6 +48,7 @@ router.get("/:stallId", async (req, res) => {
 
     /* =========================
        3️⃣ ALL CANDIES (SINGLE TAB)
+       ✅ IMAGE ADDED
     ========================= */
     const [candies] = await db.query(
       `
@@ -56,12 +57,13 @@ router.get("/:stallId", async (req, res) => {
         c.code,
         c.name,
         c.price,
+        c.image,
         IFNULL(i.stock, 0) AS stock
       FROM stall_candies sc
       JOIN candies c ON c.id = sc.candy_id
       LEFT JOIN stall_candy_inventory i
         ON i.stall_id = sc.stall_id
-        AND i.candy_id = sc.candy_id
+       AND i.candy_id = sc.candy_id
       WHERE sc.stall_id = ?
       ORDER BY c.name
       `,
@@ -69,45 +71,83 @@ router.get("/:stallId", async (req, res) => {
     );
 
     /* =========================
-       4️⃣ COMBO OFFER RULES (NEW SYSTEM ONLY)
+       4️⃣ COMBO OFFER RULES
     ========================= */
     const [offers] = await db.query(
       `
       SELECT
-        r.id,
-        r.unique_count,
-        r.offer_price,
-        r.price
-      FROM combo_offer_rules r
-      WHERE r.is_active = 1
-      ORDER BY r.id
+        id,
+        unique_count,
+        offer_price,
+        price,
+        price_pattern
+      FROM combo_offer_rules
+      WHERE is_active = 1
+      ORDER BY id
       `
     );
 
+    /* 🔥 parse price_pattern JSON */
+    for (const offer of offers) {
+      if (offer.price_pattern) {
+        offer.price_pattern = JSON.parse(offer.price_pattern);
+      }
+    }
+
     /* =========================
-       5️⃣ RULE → ALLOWED CANDIES
-       ✔ stock = 0 allowed (dim in UI)
+       5️⃣ ATTACH CANDIES TO OFFERS
+       ✅ IMAGE ADDED
     ========================= */
     for (const offer of offers) {
-      const [offerCandies] = await db.query(
-        `
-        SELECT
-          c.id,
-          c.name,
-          c.price,
-          IFNULL(i.stock, 0) AS stock
-        FROM combo_offer_rule_candies rc
-        JOIN candies c ON c.id = rc.candy_id
-        LEFT JOIN stall_candy_inventory i
-          ON i.candy_id = c.id
-         AND i.stall_id = ?
-        WHERE rc.rule_id = ?
-        ORDER BY c.name
-        `,
-        [stallId, offer.id]
-      );
 
-      offer.candies = offerCandies;
+      /* ===== SAME PRICE COMBO ===== */
+      if (offer.price !== null) {
+        const [offerCandies] = await db.query(
+          `
+          SELECT
+            c.id,
+            c.name,
+            c.price,
+            c.image,
+            IFNULL(i.stock, 0) AS stock
+          FROM combo_offer_rule_candies rc
+          JOIN candies c ON c.id = rc.candy_id
+          LEFT JOIN stall_candy_inventory i
+            ON i.candy_id = c.id
+           AND i.stall_id = ?
+          WHERE rc.rule_id = ?
+          ORDER BY c.name
+          `,
+          [stallId, offer.id]
+        );
+
+        offer.candies = offerCandies;
+      }
+
+      /* ===== MIXED PRICE COMBO ===== */
+      else {
+        const [mixedCandies] = await db.query(
+          `
+          SELECT
+            c.id,
+            c.name,
+            c.price,
+            c.image,
+            IFNULL(i.stock, 0) AS stock
+          FROM stall_candies sc
+          JOIN candies c ON c.id = sc.candy_id
+          LEFT JOIN stall_candy_inventory i
+            ON i.candy_id = c.id
+           AND i.stall_id = ?
+          WHERE sc.stall_id = ?
+            AND c.price IN (65, 80)
+          ORDER BY c.price, c.name
+          `,
+          [stallId, stallId]
+        );
+
+        offer.candies = mixedCandies;
+      }
     }
 
     /* =========================
@@ -116,8 +156,8 @@ router.get("/:stallId", async (req, res) => {
     res.json({
       stall,
       event: event || null,
-      candies, // SingleGrid
-      offers   // ComboGrid (RULE BASED)
+      candies,
+      offers
     });
 
   } catch (err) {

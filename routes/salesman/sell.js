@@ -1,12 +1,13 @@
 import express from "express";
 import { db } from "../../config/db.js";
-import { applyOfferEngine } from "../../services/offerEngine.js";
 
 const router = express.Router();
 
 /**
  * POST /api/salesman/:stallId/sell
- * Single + Combo checkout (offer aware)
+ * ✅ FINAL CHECKOUT
+ * ✅ FRONTEND IS SOURCE OF TRUTH
+ * ✅ COMBO + SINGLE BOTH SUPPORTED
  */
 router.post("/:stallId/sell", async (req, res) => {
   const { stallId } = req.params;
@@ -21,36 +22,49 @@ router.post("/:stallId/sell", async (req, res) => {
   try {
     await conn.beginTransaction();
 
-    // 🔥 APPLY OFFER ENGINE (QTY + COMBO SAFE)
-    const {
-      lines: finalLines,
-      total: finalTotal
-    } = await applyOfferEngine({ lines });
+    /* =========================
+       1️⃣ FINAL TOTAL (CORRECT)
+    ========================= */
+    let finalTotal = 0;
 
-    if (isNaN(finalTotal)) {
-      throw new Error("Final total calculation failed");
+    for (const line of lines) {
+
+      // ✅ COMBO
+      if (line.type === "COMBO") {
+        finalTotal += Number(line.price || 0);
+      }
+
+      // ✅ SINGLE ITEM
+      if (line.type === "ITEM" && Array.isArray(line.items)) {
+        for (const it of line.items) {
+          finalTotal +=
+            Number(it.price || 0) * Number(it.qty || 1);
+        }
+      }
     }
 
-    // 1️⃣ CREATE SALE
+    if (isNaN(finalTotal)) {
+      throw new Error("Invalid total from frontend");
+    }
+
+    /* =========================
+       2️⃣ CREATE SALE
+    ========================= */
     const [saleRes] = await conn.query(
       `
       INSERT INTO sales (stall_id, total)
       VALUES (?, ?)
       `,
-      [stallId, Number(finalTotal)]
+      [stallId, finalTotal]
     );
 
     const saleId = saleRes.insertId;
 
-    // 2️⃣ PROCESS SALE ITEMS
-    for (const line of finalLines) {
-
-      // ✅ DO NOT FORCE COMBO PRICE = 0
+    /* =========================
+       3️⃣ SALE ITEMS + INVENTORY
+    ========================= */
+    for (const line of lines) {
       const safePrice = Number(line.price || 0);
-
-      if (isNaN(safePrice)) {
-        throw new Error("Invalid item price");
-      }
 
       const [itemRes] = await conn.query(
         `
@@ -62,11 +76,9 @@ router.post("/:stallId/sell", async (req, res) => {
 
       const saleItemId = itemRes.insertId;
 
-      // 3️⃣ INVENTORY + FLAVOURS
-      for (const it of line.items) {
+      for (const it of line.items || []) {
         const qty = Number(it.qty || 1);
 
-        // 🔒 LOCK + CHECK STOCK
         const [[row]] = await conn.query(
           `
           SELECT stock
@@ -83,7 +95,6 @@ router.post("/:stallId/sell", async (req, res) => {
           );
         }
 
-        // UPDATE STOCK
         await conn.query(
           `
           UPDATE stall_candy_inventory
@@ -93,7 +104,6 @@ router.post("/:stallId/sell", async (req, res) => {
           [qty, stallId, it.candy_id]
         );
 
-        // INSERT FLAVOUR
         await conn.query(
           `
           INSERT INTO sale_item_flavours
@@ -109,7 +119,7 @@ router.post("/:stallId/sell", async (req, res) => {
 
     res.json({
       success: true,
-      total: Number(finalTotal)
+      total: finalTotal
     });
 
   } catch (err) {

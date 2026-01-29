@@ -171,7 +171,7 @@ router.get("/bills", async (req, res) => {
   }
 });
 
-// ==============================
+/// ==============================
 // 🧾 BILL DETAILS
 // ==============================
 router.get("/bills/:billId", async (req, res) => {
@@ -182,27 +182,56 @@ router.get("/bills/:billId", async (req, res) => {
       SELECT
         si.id AS sale_item_id,
         si.type,
-        CASE
-          WHEN si.type = 'COMBO' THEN co.price
-          ELSE si.price
-        END AS display_price,
-        co.title AS combo_title,
+        si.price AS display_price,
+        NULL AS combo_title,
         c.name AS candy_name,
         sif.qty
       FROM sale_items si
-      LEFT JOIN combo_offers co ON co.id = si.offer_id
       LEFT JOIN sale_item_flavours sif ON sif.sale_item_id = si.id
       LEFT JOIN candies c ON c.id = sif.candy_id
       WHERE si.sale_id = ?
       ORDER BY si.id, sif.id
     `, [billId]);
 
-    res.json(rows);
+    const items = [];
+    const combosMap = {};
+
+    for (const r of rows) {
+      if (r.type === "COMBO") {
+        if (!combosMap[r.sale_item_id]) {
+          combosMap[r.sale_item_id] = {
+            sale_item_id: r.sale_item_id,
+            title: r.combo_title || "Combo",
+            price: r.display_price,
+            candies: []
+          };
+        }
+
+        combosMap[r.sale_item_id].candies.push({
+          name: r.candy_name,
+          qty: r.qty
+        });
+      }
+
+      if (r.type === "ITEM") {
+        items.push({
+          name: r.candy_name,
+          qty: r.qty,
+          price: r.display_price
+        });
+      }
+    }
+
+    res.json({
+      bill_id: Number(billId),
+      items,
+      combos: Object.values(combosMap)
+    });
+
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
-
 
 
 

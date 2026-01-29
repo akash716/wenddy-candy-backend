@@ -1,87 +1,60 @@
 import { db } from "../config/db.js";
 
-/**
- * FINAL OFFER ENGINE
- * ✔ manual combos respected
- * ✔ singles auto-offer supported
- * ✔ no double discount
- * ✔ NaN safe
- */
 export async function applyOfferEngine({ lines }) {
 
   /* =========================
-     1️⃣ SPLIT LINES
-  ========================= */
-  const comboLines = lines.filter(l => l.type === "COMBO");
-  const itemLines  = lines.filter(l => l.type === "ITEM");
-
-  /* =========================
-     2️⃣ TOTAL OF MANUAL COMBOS
-     (FIXED PRICE)
-  ========================= */
-  const comboTotal = comboLines.reduce(
-    (s, l) => s + Number(l.price || 0),
-    0
-  );
-
-  /* =========================
-     3️⃣ FLATTEN ITEM LINES ONLY
+     1️⃣ FLATTEN ITEMS (ITEM ONLY)
   ========================= */
   const items = [];
-
-  for (const line of itemLines) {
+  for (const line of lines.filter(l => l.type === "ITEM")) {
     for (const it of line.items) {
       items.push({
         candy_id: it.candy_id,
         price: Number(it.price),
-        qty: Number(it.qty)
+        qty: Number(it.qty || 1)
       });
     }
   }
 
+  if (!items.length) {
+    return { lines, total: 0 };
+  }
+
   /* =========================
-     4️⃣ NORMAL TOTAL (ITEMS)
+     2️⃣ BUILD MAPS
   ========================= */
-  const normalItemTotal = items.reduce(
-    (s, i) => s + i.price * i.qty,
+  const candyQty = {};
+  const candyPrice = {};
+
+  for (const it of items) {
+    candyQty[it.candy_id] =
+      (candyQty[it.candy_id] || 0) + it.qty;
+    candyPrice[it.candy_id] = it.price;
+  }
+
+  /* =========================
+     3️⃣ NORMAL TOTAL
+  ========================= */
+  const normalTotal = Object.keys(candyQty).reduce(
+    (s, id) => s + candyQty[id] * candyPrice[id],
     0
   );
-
-  if (!items.length) {
-    // 🔥 only combos in cart
-    return {
-      lines,
-      total: comboTotal
-    };
-  }
-
-  /* =========================
-     5️⃣ GROUP ITEMS BY PRICE
-  ========================= */
-  const priceGroups = {};
-  for (const it of items) {
-    if (!priceGroups[it.price]) {
-      priceGroups[it.price] = [];
-    }
-    priceGroups[it.price].push({ ...it });
-  }
 
   let best = null;
 
   /* =========================
-     6️⃣ FIND BEST OFFER
+     4️⃣ SAME PRICE COMBOS (🔥 FIXED)
   ========================= */
-  for (const price in priceGroups) {
-    const group = priceGroups[price];
+  const priceTotals = {};
 
-    const qtyMap = {};
-    for (const it of group) {
-      qtyMap[it.candy_id] =
-        (qtyMap[it.candy_id] || 0) + it.qty;
-    }
+  for (const id in candyQty) {
+    const price = candyPrice[id];
+    priceTotals[price] =
+      (priceTotals[price] || 0) + candyQty[id];
+  }
 
-    const uniqueIds = Object.keys(qtyMap);
-    if (uniqueIds.length < 2) continue;
+  for (const price in priceTotals) {
+    const totalQty = priceTotals[price];
 
     const [rules] = await db.query(
       `
@@ -90,79 +63,117 @@ export async function applyOfferEngine({ lines }) {
       WHERE is_active = 1
         AND price = ?
         AND unique_count <= ?
-      ORDER BY unique_count DESC
-      LIMIT 1
       `,
-      [Number(price), uniqueIds.length]
+      [Number(price), totalQty]
     );
 
-    if (!rules.length) continue;
+    for (const r of rules) {
+      const count = Math.floor(totalQty / r.unique_count);
+      if (!count) continue;
 
-    const rule = rules[0];
+      const total = count * Number(r.offer_price);
 
-    const minQty = Math.min(
-      ...uniqueIds.map(id => qtyMap[id])
-    );
+      if (!best || total < best.total) {
+        best = {
+          type: "SAME",
+          rule: r,
+          count,
+          consume: () => {
+            let need = r.unique_count;
+            for (const id of Object.keys(candyQty)) {
+              if (
+                candyPrice[id] === Number(price) &&
+                candyQty[id] > 0 &&
+                need > 0
+              ) {
+                const use = Math.min(candyQty[id], need);
+                candyQty[id] -= use;
+                need -= use;
+              }
+            }
+          },
+          total
+        };
+      }
+    }
+  }
 
-    const comboCount = Math.floor(minQty);
-    if (!comboCount) continue;
+  /* =========================
+     5️⃣ MIXED PRICE COMBOS (UNCHANGED)
+  ========================= */
+  const [mixedRules] = await db.query(`
+    SELECT *
+    FROM combo_offer_rules
+    WHERE is_active = 1
+      AND price IS NULL
+      AND price_pattern IS NOT NULL
+  `);
 
-    const offerTotal = comboCount * Number(rule.offer_price);
+  for (const r of mixedRules) {
+    let pattern;
+    try {
+      pattern = JSON.parse(r.price_pattern);
+    } catch {
+      continue;
+    }
 
-    if (!best || offerTotal < best.offerTotal) {
+    let count = Infinity;
+
+    for (const p of pattern) {
+      const available = Object.keys(candyQty)
+        .filter(id => candyPrice[id] === p.price)
+        .reduce((s, id) => s + candyQty[id], 0);
+
+      count = Math.min(count, Math.floor(available / p.qty));
+    }
+
+    if (!count || count === Infinity) continue;
+
+    const total = count * Number(r.offer_price);
+
+    if (!best || total < best.total) {
       best = {
-        rule,
-        comboCount,
-        qtyMap,
-        price: Number(price)
+        type: "MIXED",
+        rule: r,
+        count,
+        consume: () => {
+          for (const p of pattern) {
+            let need = p.qty;
+            for (const id of Object.keys(candyQty)) {
+              if (
+                candyPrice[id] === p.price &&
+                candyQty[id] > 0 &&
+                need > 0
+              ) {
+                candyQty[id]--;
+                need--;
+              }
+            }
+          }
+        },
+        total
       };
     }
   }
 
   /* =========================
-     7️⃣ NO OFFER ON ITEMS
+     6️⃣ APPLY BEST
   ========================= */
   if (!best) {
-    return {
-      lines,
-      total: comboTotal + normalItemTotal
-    };
+    return { lines, total: normalTotal };
   }
 
-  /* =========================
-     8️⃣ CALCULATE ITEM OFFER
-  ========================= */
-  const remainingMap = {};
-  for (const it of items) {
-    remainingMap[it.candy_id] =
-      (remainingMap[it.candy_id] || 0) + it.qty;
+  for (let i = 0; i < best.count; i++) {
+    best.consume();
   }
 
-  // consume offer items
-  for (let i = 0; i < best.comboCount; i++) {
-    let used = 0;
-    for (const id in best.qtyMap) {
-      if (used >= best.rule.unique_count) break;
-      if (remainingMap[id] > 0) {
-        remainingMap[id]--;
-        used++;
-      }
-    }
-  }
+  const remainingTotal = Object.keys(candyQty).reduce(
+    (s, id) => s + candyQty[id] * candyPrice[id],
+    0
+  );
 
-  const remainingItemTotal = items.reduce((s, it) => {
-    return s + (remainingMap[it.candy_id] || 0) * it.price;
-  }, 0);
-
-  const itemTotalWithOffer =
-    best.comboCount * Number(best.rule.offer_price) +
-    remainingItemTotal;
-
-  /* =========================
-     9️⃣ FINAL TOTAL
-  ========================= */
   return {
     lines,
-    total: comboTotal + itemTotalWithOffer
+    total: best.count * Number(best.rule.offer_price) + remainingTotal
   };
 }
