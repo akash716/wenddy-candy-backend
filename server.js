@@ -3,6 +3,12 @@ dotenv.config();
 
 import express from "express";
 import cors from "cors";
+import path from "path";
+import { fileURLToPath } from "url";
+
+/* ───────────── ESM DIRNAME FIX ───────────── */
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 /* ───────────── ROUTES ───────────── */
 import stallRoutes from "./routes/admin/stalls.js";
@@ -30,6 +36,9 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+/* ───────────── STATIC UPLOADS (🔥 FIX) ───────────── */
+app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
 /* ───────────── Health Check ───────────── */
 app.get("/", (req, res) => {
